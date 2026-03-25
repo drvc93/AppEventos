@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Str0ngP@ssw0rd!"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P 'Str0ngP@ssw0rd!' -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api-event:
+    build:
+      context: ./src/backend
+      dockerfile: EventService.API/Dockerfile
+    ports:
+      - "5010:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__EventDb: "Server=sqlserver;Database=EventDb;User Id=sa;Password=Str0ngP@ssw0rd!;TrustServerCertificate=True"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__RabbitMq: "rabbitmq://rabbitmq"
+      Jwt__Key: "S3cur3K3yF0rD3m0Purp0s3sM1n32Chars!!"
+      Jwt__Issuer: "EventPlatform"
+      Jwt__Audience: "EventPlatformClient"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api-notification:
+    build:
+      context: ./src/backend
+      dockerfile: NotificationService.API/Dockerfile
+    ports:
+      - "5020:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__NotificationDb: "Server=sqlserver;Database=NotificationDb;User Id=sa;Password=Str0ngP@ssw0rd!;TrustServerCertificate=True"
+      ConnectionStrings__RabbitMq: "rabbitmq://rabbitmq"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./src/frontend/event-platform-web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-event
+
+volumes:
+  sqlserver_data:
